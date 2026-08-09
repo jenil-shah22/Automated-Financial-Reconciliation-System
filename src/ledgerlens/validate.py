@@ -149,9 +149,15 @@ def apply_contracts(
     def collect(row: pd.Series) -> str:
         return QUARANTINE_RULE_SEPARATOR.join(sorted(row.index[row.values]))
 
-    failed_rule_ids = hits.apply(collect, axis=1) if len(hits.columns) else pd.Series(
-        "", index=df.index
-    )
+    # An empty input still has to produce an empty result, not an exception.
+    # `DataFrame.apply(axis=1)` returns a DataFrame rather than a Series when
+    # there are no rows, so the empty case is handled explicitly. An extract
+    # that arrives empty is a real scenario - a failed upstream job, a period
+    # with no postings - and it should report "0 rows, 0 defects", not crash.
+    if len(df) and len(hits.columns):
+        failed_rule_ids = hits.apply(collect, axis=1)
+    else:
+        failed_rule_ids = pd.Series([""] * len(df), index=df.index, dtype=object)
     is_bad = failed_rule_ids != ""
 
     quarantined = df[is_bad].copy()

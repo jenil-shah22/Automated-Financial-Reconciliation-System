@@ -3,10 +3,10 @@
 **A GL-to-subledger reconciliation lakehouse with data contracts, a row-level
 quarantine layer, and a verifiable break taxonomy.**
 
-> **Status: v0.1 in progress — Day 1 complete, Day 2 written but not yet executed.**
-> Every number below came from an actual run. The Bronze layer is written and
-> unit-tested but has **not been run against Delta yet** — it is marked as such
-> rather than claimed. Unbuilt work is in [Roadmap](#roadmap).
+> **Status: v0.1 in progress — Day 1 complete; Days 2–3 written, not yet
+> executed against Delta.** Every number below came from an actual run. The
+> Spark layers are written and unit-tested but await a Databricks run, and are
+> marked as such rather than claimed. Unbuilt work is in [Roadmap](#roadmap).
 
 ---
 
@@ -183,9 +183,11 @@ ledgerlens/
 │   ├── schemas.py                 explicit schemas for every layer, never inferred
 │   ├── generate_data.py           synthetic sources + planted breaks + manifest
 │   ├── bronze.py                  lossless CSV -> Delta ingest with lineage
+│   ├── quality.py                 compiles contracts.yaml into Spark SQL predicates
+│   ├── silver.py                  contract enforcement + row-level quarantine
 │   └── validate.py                independent verifier (pandas oracle)
-├── notebooks/01_bronze_ingest.py  Databricks wrapper (thin - logic lives in src/)
-├── tests/                         86 pytest tests incl. negative controls
+├── notebooks/                     Databricks wrappers (thin - logic lives in src/)
+├── tests/                         113 pytest tests incl. negative controls
 └── data/raw/                      generated CSVs (gitignored) + control manifest
 ```
 
@@ -249,9 +251,41 @@ collide with a source column: `_ingested_at`, `_source_file`, `_batch_id`.
 
 ---
 
+## The Silver layer
+
+Bronze preserved the evidence; silver applies judgment. It decides which rows
+are fit to reconcile, records why the others were not, and **only then** applies
+types.
+
+**Rules are compiled to SQL, not to Spark `Column` objects.** Each rule in
+`contracts.yaml` becomes a Spark SQL expression that is TRUE when the rule is
+violated. Three reasons:
+
+1. **Testable without a JVM** — the exact predicate for all 34 rules is asserted
+   in CI with no cluster. Only execution needs Spark.
+2. **Auditable** — *"GL_NONZERO_AMOUNT rejected 2 rows"* is an assertion; the
+   generated SQL printed beside it is the evidence. A `Column` object is opaque.
+3. **Portable** — the same string runs in a Databricks SQL dashboard, so the DQ
+   scorecard queries the logic the pipeline enforced instead of a hand-written
+   re-implementation that can drift.
+
+**The `RLIKE` trap.** Spark's `RLIKE` is a *search*, not a full match —
+`'INV-2026-000001-JUNK'` satisfies an unanchored invoice pattern. The pandas
+oracle uses `fullmatch`. The two only agree because every pattern is anchored,
+so that invariant is *enforced* by `assert_patterns_are_anchored` and a test,
+not trusted. An unanchored pattern would make the engines disagree for a reason
+that looks like nothing at all.
+
+**Row conservation.** `silver_rows + quarantine_rows == bronze_rows`, asserted
+on every run. A failing row is not deleted, it is filed — with the full list of
+rule ids that rejected it, because a row breaching three rules is three tickets
+for three different people.
+
+---
+
 ## Testing
 
-86 tests. The ones that carry weight:
+113 tests. The ones that carry weight:
 
 - **Precedence ladder** — one test per status, plus every ordering conflict
   (duplicate vs mismatch, duplicate vs timing, mismatch vs timing).
@@ -288,14 +322,18 @@ Stated first because a reviewer will find them anyway.
 - **The verifier shares an author with the generator.** Differential testing
   catches implementation slips, not a shared misunderstanding of the spec.
   That is what the written break taxonomy and the unit tests are for.
-- **Bronze has not been executed against Delta yet.** `bronze.py` is written and
-  its JVM-free logic is unit-tested, but the Spark path is unrun. Local Spark
-  would not start on the development machine — Netty could not open a loopback
-  connection inside the JVM (`failed to create a child event loop`), which is
-  endpoint-security software blocking `java.exe`, not a pipeline fault. Python
-  loopback on the same machine works fine. Bronze therefore runs on Databricks,
-  and the local path stays a documented fallback rather than a verified one.
-- **Not yet built:** everything from Day 3 onward — see below.
+- **The Spark layers have not been executed against Delta yet.** `bronze.py` and
+  `silver.py` are written, and everything JVM-free about them is unit-tested —
+  the SQL for all 34 rules, the schema contracts, the header check, row-count
+  logic. But the Spark execution path is unrun. Local Spark would not start on
+  the development machine: Netty could not open a loopback connection inside
+  the JVM (`failed to create a child event loop`), which is endpoint-security
+  software blocking `java.exe`, not a pipeline fault — Python loopback on the
+  same machine works fine. These layers therefore run on Databricks, and the
+  local path stays a documented fallback rather than a verified one. **The
+  quarantine and break counts quoted above are from the pandas oracle**, which
+  is the specification the Spark implementation must reproduce.
+- **Not yet built:** everything from Day 4 onward — see below.
 
 ---
 
@@ -307,7 +345,7 @@ Marked honestly: none of this is built yet.
 |---|---|---|
 | Day 1 | Scaffold, generator, planted breaks, manifest, contracts, verifier | **Done** |
 | Day 2 | Explicit schemas, Bronze ingest, Databricks notebook | **Written, not yet executed against Delta** |
-| Day 3 | Silver layer in PySpark, contract enforcement, quarantine tables | Not started |
+| Day 3 | Silver layer in PySpark, contract enforcement, quarantine tables | **Written, not yet executed against Delta** |
 | Day 4 | Reconciliation engine + gold tables in PySpark | Not started |
 | Day 5 | DQ scorecard, Databricks SQL dashboard | Not started |
 | Day 6 | Data dictionary, metric definitions, runbook | Not started |

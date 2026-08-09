@@ -175,6 +175,21 @@ def test_no_row_is_ever_silently_dropped():
     assert len(clean) + len(quarantined) == len(df)
 
 
+def test_empty_input_produces_empty_output_not_an_exception():
+    """A real scenario: a failed upstream job, or a period with no postings.
+
+    The pipeline should report '0 rows, 0 defects' rather than crash - an empty
+    extract is a fact about the business, not a malformed file.
+    """
+    rules = [_rule(id="R_NN", column="amount", check="not_null")]
+    empty = pd.DataFrame({"amount": pd.Series(dtype=str)})
+    clean, quarantined, violations = apply_contracts(empty, rules)
+
+    assert len(clean) == 0
+    assert len(quarantined) == 0
+    assert violations == {"R_NN": 0}
+
+
 def test_warn_severity_rules_do_not_quarantine():
     rules = [_rule(id="R_WARN", column="amount", check="not_null", severity="warn")]
     df = pd.DataFrame({"amount": ["", "1.00"]})
