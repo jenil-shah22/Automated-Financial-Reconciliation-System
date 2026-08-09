@@ -1,0 +1,20 @@
+# Normalise line endings to LF in the repository.
+#
+# This matters more than usual here: the generator is asserted to produce
+# byte-identical files for a given seed, and the control manifest records
+# SHA-256 hashes of the source CSVs. If Git rewrote LF to CRLF on checkout,
+# those hashes would differ on Windows and the reproducibility test would fail
+# for reasons that have nothing to do with the pipeline.
+* text=auto eol=lf
+
+# Generated data is written explicitly with LF by the generator; never touch it.
+*.csv -text
+*.json -text
+
+# Databricks notebooks are Python source files.
+notebooks/*.py text eol=lf
+
+# Keep diffs readable for the files a reviewer actually reads.
+*.md text eol=lf diff=markdown
+*.yaml text eol=lf
+*.py text eol=lf diff=python

@@ -1,0 +1,369 @@
+# =============================================================================
+# LedgerLens - Data Contracts
+# =============================================================================
+# This file is the single source of truth for what a "valid" row looks like.
+#
+# WHY CONFIG AND NOT CODE
+#   A controller or an auditor can read this file and disagree with a rule
+#   without reading Python. Rule ids are stable and are stamped onto every
+#   quarantined row, so "why was this row rejected?" is answerable months later
+#   from the data alone.
+#
+# RULE ID CONTRACT
+#   Ids are permanent. If a rule's meaning changes, retire the id and add a new
+#   one. Never recycle an id - historical quarantine records reference it.
+#   Naming: <DATASET>_<CHECKTYPE>_<COLUMN>
+#     NN      not_null
+#     UNIQ    unique
+#     FMT     regex / format
+#     DOM     allowed_values (domain / reference list)
+#     NUM     parses as a number
+#     NONZERO non-zero
+#     RANGE   numeric bounds
+#
+# NULL SEMANTICS (important, and a deliberate choice)
+#   Every check except `not_null` is null-tolerant: a null value SKIPS the
+#   check rather than failing it. Otherwise one null amount would trip
+#   not_null + non_zero + numeric_range and report three defects for one
+#   problem, inflating the DQ score's denominator and misleading whoever reads
+#   the scorecard. One defect, one rule.
+#
+# SEVERITY
+#   reject  -> row does not enter silver; it goes to quarantine with rule ids
+#   warn    -> row proceeds to silver, flagged (no warn rules exist in v0.1)
+# =============================================================================
+
+version: 1
+
+metadata:
+  owner: Data Engineering
+  steward: Financial Control
+  reviewed_on: "2026-08-06"
+  change_policy: >
+    Rule ids are immutable. Adding a rule requires regenerating the control
+    manifest, because the expected quarantine count is part of the manifest.
+
+# -----------------------------------------------------------------------------
+# Reconciliation parameters
+# -----------------------------------------------------------------------------
+recon:
+  # The business key. Exact-match only in v0.1 - no fuzzy matching.
+  business_key:
+    - account_code
+    - vendor_code
+    - invoice_number
+
+  # Absolute currency tolerance. A difference at or below this is rounding,
+  # not a break. Chosen as 1.00 because the sources round to 2dp independently
+  # and sub-unit drift carries no accounting meaning.
+  amount_tolerance_abs: 1.00
+
+  # What happens to a business key that lost a row to quarantine.
+  #   exclude_from_recon -> the surviving side is still classified normally.
+  # In v0.1 this never creates a false break, because defects are only ever
+  # planted on single-sided keys. See docs/data_dictionary.md.
+  quarantine_policy: exclude_from_recon
+
+  # Classification precedence. Evaluated top-down; first match wins.
+  # This ladder is the answer to "what if a key is BOTH duplicated AND has an
+  # amount mismatch?" - duplicates are structural and outrank value checks.
+  status_precedence:
+    - DUPLICATE_IN_SUBLEDGER
+    - MISSING_FROM_SUBLEDGER
+    - MISSING_FROM_GL
+    - AMOUNT_MISMATCH
+    - TIMING_DIFFERENCE
+    - MATCHED
+
+# -----------------------------------------------------------------------------
+# Reference domains - shared allowed-value lists
+# -----------------------------------------------------------------------------
+reference:
+  account_codes: ["5010", "6010", "6020", "6030", "6040", "6050", "7010"]
+  department_codes: ["D100", "D200", "D300", "D400", "D500"]
+  currencies: ["USD"]
+  payment_statuses: ["OPEN", "PAID", "PARTIAL", "ON_HOLD"]
+
+# -----------------------------------------------------------------------------
+# Shared patterns
+# -----------------------------------------------------------------------------
+patterns:
+  fiscal_period: "^[0-9]{4}-(0[1-9]|1[0-2])$"
+  vendor_code: "^V[0-9]{4}$"
+  invoice_number: "^INV-[0-9]{4}-[0-9]{6}$"
+  department_code: "^D[0-9]{3}$"
+  iso_date: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+
+# =============================================================================
+# Datasets
+# =============================================================================
+datasets:
+
+  # ---------------------------------------------------------------------------
+  # General Ledger
+  # ---------------------------------------------------------------------------
+  gl:
+    label: General Ledger
+    source_file: data/raw/gl.csv
+    primary_key: gl_entry_id
+    rules:
+      - id: GL_NN_ENTRY_ID
+        column: gl_entry_id
+        check: not_null
+        severity: reject
+        description: Every GL row must carry a surrogate key.
+
+      - id: GL_UNIQ_ENTRY_ID
+        column: gl_entry_id
+        check: unique
+        severity: reject
+        description: >
+          Surrogate key must be unique. Note this is the TECHNICAL key, not the
+          business key - business-key duplication is a reconciliation finding
+          (DUPLICATE_IN_SUBLEDGER), not a data defect, and must never be
+          quarantined here.
+
+      - id: GL_NN_POSTING_DATE
+        column: posting_date
+        check: not_null
+        severity: reject
+        description: A posted entry always has a posting date.
+
+      - id: GL_FMT_POSTING_DATE
+        column: posting_date
+        check: regex
+        pattern_ref: iso_date
+        severity: reject
+        description: Posting date must be ISO yyyy-mm-dd.
+
+      - id: GL_NN_FISCAL_PERIOD
+        column: fiscal_period
+        check: not_null
+        severity: reject
+        description: Reporting is by period; a null period cannot be reported.
+
+      - id: GL_FMT_FISCAL_PERIOD
+        column: fiscal_period
+        check: regex
+        pattern_ref: fiscal_period
+        severity: reject
+        description: Fiscal period must be yyyy-mm with a valid month.
+
+      - id: GL_NN_ACCOUNT_CODE
+        column: account_code
+        check: not_null
+        severity: reject
+        description: Account code is part of the business key.
+
+      - id: GL_DOM_ACCOUNT_CODE
+        column: account_code
+        check: allowed_values
+        values_ref: account_codes
+        severity: reject
+        description: Account must exist in the chart of accounts.
+
+      - id: GL_FMT_DEPARTMENT_CODE
+        column: department_code
+        check: regex
+        pattern_ref: department_code
+        severity: reject
+        description: Department code must be Dnnn.
+
+      - id: GL_DOM_DEPARTMENT_CODE
+        column: department_code
+        check: allowed_values
+        values_ref: department_codes
+        severity: reject
+        description: Department must exist in the org hierarchy.
+
+      - id: GL_NN_VENDOR_CODE
+        column: vendor_code
+        check: not_null
+        severity: reject
+        description: Vendor code is part of the business key.
+
+      - id: GL_FMT_VENDOR_CODE
+        column: vendor_code
+        check: regex
+        pattern_ref: vendor_code
+        severity: reject
+        description: Vendor code must be Vnnnn.
+
+      - id: GL_NN_INVOICE_NUMBER
+        column: invoice_number
+        check: not_null
+        severity: reject
+        description: Invoice number is part of the business key.
+
+      - id: GL_FMT_INVOICE_NUMBER
+        column: invoice_number
+        check: regex
+        pattern_ref: invoice_number
+        severity: reject
+        description: Invoice number must be INV-yyyy-nnnnnn.
+
+      - id: GL_NN_AMOUNT
+        column: amount
+        check: not_null
+        severity: reject
+        description: An entry with no amount cannot be reconciled.
+
+      - id: GL_NUM_AMOUNT
+        column: amount
+        check: numeric
+        severity: reject
+        description: Amount must parse as a number.
+
+      - id: GL_NONZERO_AMOUNT
+        column: amount
+        check: non_zero
+        severity: reject
+        description: >
+          A zero-value posting carries no accounting information and is almost
+          always an export artefact.
+
+      - id: GL_RANGE_AMOUNT
+        column: amount
+        check: numeric_range
+        min: -1000000000
+        max: 1000000000
+        severity: reject
+        description: Amounts beyond +/- 1bn are system corruption, not business.
+
+      - id: GL_DOM_CURRENCY
+        column: currency
+        check: allowed_values
+        values_ref: currencies
+        severity: reject
+        description: >
+          v0.1 is single-currency. Matching assumes both sides are USD; no FX
+          revaluation is performed.
+
+  # ---------------------------------------------------------------------------
+  # Accounts Payable subledger
+  # ---------------------------------------------------------------------------
+  ap:
+    label: AP Subledger
+    source_file: data/raw/ap_subledger.csv
+    primary_key: ap_line_id
+    rules:
+      - id: AP_NN_LINE_ID
+        column: ap_line_id
+        check: not_null
+        severity: reject
+        description: Every subledger line must carry a surrogate key.
+
+      - id: AP_UNIQ_LINE_ID
+        column: ap_line_id
+        check: unique
+        severity: reject
+        description: >
+          Technical key uniqueness. A genuine double-booking of the same
+          invoice produces two DIFFERENT line ids on the same business key -
+          that is the DUPLICATE_IN_SUBLEDGER break and must survive to recon.
+          A repeated line id instead means a broken extract.
+
+      - id: AP_NN_INVOICE_DATE
+        column: invoice_date
+        check: not_null
+        severity: reject
+        description: Invoice date drives aging and due-date logic.
+
+      - id: AP_FMT_INVOICE_DATE
+        column: invoice_date
+        check: regex
+        pattern_ref: iso_date
+        severity: reject
+        description: Invoice date must be ISO yyyy-mm-dd.
+
+      - id: AP_NN_FISCAL_PERIOD
+        column: fiscal_period
+        check: not_null
+        severity: reject
+        description: Required to detect timing differences.
+
+      - id: AP_FMT_FISCAL_PERIOD
+        column: fiscal_period
+        check: regex
+        pattern_ref: fiscal_period
+        severity: reject
+        description: Fiscal period must be yyyy-mm with a valid month.
+
+      - id: AP_NN_ACCOUNT_CODE
+        column: account_code
+        check: not_null
+        severity: reject
+        description: Account code is part of the business key.
+
+      - id: AP_DOM_ACCOUNT_CODE
+        column: account_code
+        check: allowed_values
+        values_ref: account_codes
+        severity: reject
+        description: Account must exist in the chart of accounts.
+
+      - id: AP_NN_VENDOR_CODE
+        column: vendor_code
+        check: not_null
+        severity: reject
+        description: Vendor code is part of the business key.
+
+      - id: AP_FMT_VENDOR_CODE
+        column: vendor_code
+        check: regex
+        pattern_ref: vendor_code
+        severity: reject
+        description: Vendor code must be Vnnnn.
+
+      - id: AP_NN_INVOICE_NUMBER
+        column: invoice_number
+        check: not_null
+        severity: reject
+        description: Invoice number is part of the business key.
+
+      - id: AP_FMT_INVOICE_NUMBER
+        column: invoice_number
+        check: regex
+        pattern_ref: invoice_number
+        severity: reject
+        description: Invoice number must be INV-yyyy-nnnnnn.
+
+      - id: AP_NN_AMOUNT
+        column: amount
+        check: not_null
+        severity: reject
+        description: A line with no amount cannot be reconciled.
+
+      - id: AP_NUM_AMOUNT
+        column: amount
+        check: numeric
+        severity: reject
+        description: Amount must parse as a number.
+
+      - id: AP_NONZERO_AMOUNT
+        column: amount
+        check: non_zero
+        severity: reject
+        description: Zero-value invoice lines are export artefacts.
+
+      - id: AP_RANGE_AMOUNT
+        column: amount
+        check: numeric_range
+        min: -1000000000
+        max: 1000000000
+        severity: reject
+        description: Amounts beyond +/- 1bn are system corruption.
+
+      - id: AP_DOM_CURRENCY
+        column: currency
+        check: allowed_values
+        values_ref: currencies
+        severity: reject
+        description: v0.1 is single-currency.
+
+      - id: AP_DOM_PAYMENT_STATUS
+        column: payment_status
+        check: allowed_values
+        values_ref: payment_statuses
+        severity: reject
+        description: Payment status must be a known workflow state.

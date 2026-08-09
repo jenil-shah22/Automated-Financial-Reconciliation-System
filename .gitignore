@@ -1,0 +1,51 @@
+# --- Generated data -------------------------------------------------------
+# Raw CSVs are regenerated deterministically from a seed, so they are not
+# tracked. The control manifest IS tracked: it is the answer key that proves
+# the pipeline rediscovered every planted break.
+data/raw/*
+!data/raw/.gitkeep
+!data/raw/control_manifest.json
+
+data/bronze/
+data/silver/
+data/gold/
+data/lakehouse/
+data/validation_report.json
+
+# --- Python ---------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+
+# --- Tooling --------------------------------------------------------------
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# --- Editors / OS ---------------------------------------------------------
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- Databricks -----------------------------------------------------------
+.databricks/
+
+# --- Local Spark ----------------------------------------------------------
+# Created by a local SparkSession. Never useful to anyone else, and
+# metastore_db in particular is a Derby database that will conflict on clone.
+spark-warehouse/
+metastore_db/
+derby.log
+sparktmp/
+*.crc
+_SUCCESS

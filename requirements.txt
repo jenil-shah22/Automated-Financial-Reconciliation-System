@@ -1,0 +1,27 @@
+# LedgerLens runtime + dev dependencies.
+#
+# Deliberately JVM-free for the local path: data generation and the independent
+# verifier run on pandas/NumPy only, so the dataset can be regenerated on a
+# Windows laptop without installing Java. PySpark runs on Databricks, where the
+# runtime is already provisioned.
+
+pandas>=2.0
+numpy>=1.24
+pyyaml>=6.0
+
+# dev / verification
+pytest>=7.4
+
+# --- Optional: local Spark ------------------------------------------------
+# NOT required. On Databricks the runtime provides both, and the pipeline is
+# written to run there. These only enable an optional local execution path
+# (needs Java 17+), which the project brief lists as the fallback if Databricks
+# Free Edition is unavailable.
+#
+# Note: local Spark will not start on every machine. Netty needs the JVM to
+# open a loopback connection, and endpoint-security software commonly blocks
+# that for java.exe -- it surfaces as "failed to create a child event loop".
+# That is environmental, not a pipeline problem. See docs/runbook.md.
+#
+#   pyspark==3.5.3
+#   delta-spark==3.2.1

@@ -1,0 +1,268 @@
+{
+  "schema_version": 1,
+  "generator_version": "0.1.0.dev1",
+  "seed": 42,
+  "environment": {
+    "python": "3.11.9",
+    "numpy": "1.26.4",
+    "pandas": "2.2.3"
+  },
+  "parameters": {
+    "invoices": 970,
+    "periods": [
+      "2026-01",
+      "2026-02",
+      "2026-03",
+      "2026-04",
+      "2026-05",
+      "2026-06"
+    ],
+    "amount_tolerance_abs": 1.0,
+    "business_key": [
+      "account_code",
+      "vendor_code",
+      "invoice_number"
+    ],
+    "fate_counts": {
+      "MATCHED": 820,
+      "AMOUNT_MISMATCH": 40,
+      "TIMING_DIFFERENCE": 35,
+      "MISSING_FROM_SUBLEDGER": 25,
+      "MISSING_FROM_GL": 30,
+      "DUPLICATE_IN_SUBLEDGER": 20
+    }
+  },
+  "row_counts": {
+    "gl_raw": 940,
+    "ap_raw": 969,
+    "total_raw": 1909,
+    "gl_after_quarantine": 930,
+    "ap_after_quarantine": 955
+  },
+  "expected_quarantine": {
+    "gl_rows": 10,
+    "ap_rows": 14,
+    "total_rows": 24,
+    "total_violations": 26,
+    "by_rule": {
+      "gl": {
+        "GL_DOM_ACCOUNT_CODE": 2,
+        "GL_DOM_CURRENCY": 1,
+        "GL_DOM_DEPARTMENT_CODE": 1,
+        "GL_FMT_DEPARTMENT_CODE": 1,
+        "GL_FMT_FISCAL_PERIOD": 2,
+        "GL_NN_AMOUNT": 3,
+        "GL_NONZERO_AMOUNT": 2
+      },
+      "ap": {
+        "AP_DOM_CURRENCY": 2,
+        "AP_DOM_PAYMENT_STATUS": 1,
+        "AP_FMT_FISCAL_PERIOD": 1,
+        "AP_FMT_VENDOR_CODE": 2,
+        "AP_NN_AMOUNT": 2,
+        "AP_NONZERO_AMOUNT": 2,
+        "AP_NUM_AMOUNT": 1,
+        "AP_RANGE_AMOUNT": 1,
+        "AP_UNIQ_LINE_ID": 2
+      }
+    }
+  },
+  "expected_dq_score_pct": 98.7428,
+  "expected_breaks": {
+    "MATCHED": 820,
+    "AMOUNT_MISMATCH": 40,
+    "TIMING_DIFFERENCE": 35,
+    "MISSING_FROM_SUBLEDGER": 15,
+    "MISSING_FROM_GL": 16,
+    "DUPLICATE_IN_SUBLEDGER": 20
+  },
+  "expected_key_total": 946,
+  "expected_edge_cases": {
+    "matched_within_tolerance": 60,
+    "amount_mismatch_with_period_shift": 5,
+    "duplicate_triplets": 4,
+    "duplicate_with_unequal_amounts": 5
+  },
+  "planted_defects": [
+    {
+      "dataset": "gl",
+      "defect_name": "gl_null_amount",
+      "surrogate_key": "GL0000025",
+      "expected_rule_ids": "GL_NN_AMOUNT",
+      "note": "Export dropped the value column. Not_null catches it; the numeric/non-zero/range checks skip nulls so this is ONE defect."
+    },
+    {
+      "dataset": "gl",
+      "defect_name": "gl_null_amount",
+      "surrogate_key": "GL0000046",
+      "expected_rule_ids": "GL_NN_AMOUNT",
+      "note": "Export dropped the value column. Not_null catches it; the numeric/non-zero/range checks skip nulls so this is ONE defect."
+    },
+    {
+      "dataset": "gl",
+      "defect_name": "gl_zero_amount",
+      "surrogate_key": "GL0000068",
+      "expected_rule_ids": "GL_NONZERO_AMOUNT",
+      "note": "Zero-value posting - carries no accounting meaning."
+    },
+    {
+      "dataset": "gl",
+      "defect_name": "gl_zero_amount",
+      "surrogate_key": "GL0000109",
+      "expected_rule_ids": "GL_NONZERO_AMOUNT",
+      "note": "Zero-value posting - carries no accounting meaning."
+    },
+    {
+      "dataset": "gl",
+      "defect_name": "gl_bad_fiscal_period",
+      "surrogate_key": "GL0000135",
+      "expected_rule_ids": "GL_FMT_FISCAL_PERIOD",
+      "note": "Locale-dependent separator from a spreadsheet round-trip."
+    },
+    {
+      "dataset": "gl",
+      "defect_name": "gl_bad_fiscal_period",
+      "surrogate_key": "GL0000178",
+      "expected_rule_ids": "GL_FMT_FISCAL_PERIOD",
+      "note": "Locale-dependent separator from a spreadsheet round-trip."
+    },
+    {
+      "dataset": "gl",
+      "defect_name": "gl_unknown_account",
+      "surrogate_key": "GL0000201",
+      "expected_rule_ids": "GL_DOM_ACCOUNT_CODE",
+      "note": "Account not in the chart of accounts - a suspense/clearing code that escaped into the extract."
+    },
+    {
+      "dataset": "gl",
+      "defect_name": "gl_unknown_account",
+      "surrogate_key": "GL0000280",
+      "expected_rule_ids": "GL_DOM_ACCOUNT_CODE",
+      "note": "Account not in the chart of accounts - a suspense/clearing code that escaped into the extract."
+    },
+    {
+      "dataset": "gl",
+      "defect_name": "gl_bad_department",
+      "surrogate_key": "GL0000289",
+      "expected_rule_ids": "GL_FMT_DEPARTMENT_CODE|GL_DOM_DEPARTMENT_CODE",
+      "note": "Lowercased with trailing whitespace. Trips BOTH format and domain, because those are genuinely independent assertions - this row proves quarantine records rule ids as a LIST."
+    },
+    {
+      "dataset": "gl",
+      "defect_name": "gl_null_amount_and_bad_currency",
+      "surrogate_key": "GL0000307",
+      "expected_rule_ids": "GL_NN_AMOUNT|GL_DOM_CURRENCY",
+      "note": "Two unrelated defects on one row - proves rules are evaluated independently rather than short-circuiting on first failure."
+    },
+    {
+      "dataset": "ap",
+      "defect_name": "ap_null_amount",
+      "surrogate_key": "AP0000037",
+      "expected_rule_ids": "AP_NN_AMOUNT",
+      "note": "Missing invoice value."
+    },
+    {
+      "dataset": "ap",
+      "defect_name": "ap_null_amount",
+      "surrogate_key": "AP0000082",
+      "expected_rule_ids": "AP_NN_AMOUNT",
+      "note": "Missing invoice value."
+    },
+    {
+      "dataset": "ap",
+      "defect_name": "ap_zero_amount",
+      "surrogate_key": "AP0000104",
+      "expected_rule_ids": "AP_NONZERO_AMOUNT",
+      "note": "Zero-value invoice line."
+    },
+    {
+      "dataset": "ap",
+      "defect_name": "ap_zero_amount",
+      "surrogate_key": "AP0000135",
+      "expected_rule_ids": "AP_NONZERO_AMOUNT",
+      "note": "Zero-value invoice line."
+    },
+    {
+      "dataset": "ap",
+      "defect_name": "ap_non_numeric_amount",
+      "surrogate_key": "AP0000137",
+      "expected_rule_ids": "AP_NUM_AMOUNT",
+      "note": "Literal text in a numeric column. Not_null PASSES (the cell is not empty) - which is exactly why a separate numeric check exists. Non-zero and range then skip, since an unparseable value cannot be meaningfully compared."
+    },
+    {
+      "dataset": "ap",
+      "defect_name": "ap_bad_currency",
+      "surrogate_key": "AP0000167",
+      "expected_rule_ids": "AP_DOM_CURRENCY",
+      "note": "Symbol instead of ISO code."
+    },
+    {
+      "dataset": "ap",
+      "defect_name": "ap_bad_currency",
+      "surrogate_key": "AP0000243",
+      "expected_rule_ids": "AP_DOM_CURRENCY",
+      "note": "Symbol instead of ISO code."
+    },
+    {
+      "dataset": "ap",
+      "defect_name": "ap_bad_vendor_code",
+      "surrogate_key": "AP0000284",
+      "expected_rule_ids": "AP_FMT_VENDOR_CODE",
+      "note": "Malformed vendor code - and it is part of the business key, so letting it through would silently create a phantom break."
+    },
+    {
+      "dataset": "ap",
+      "defect_name": "ap_bad_vendor_code",
+      "surrogate_key": "AP0000395",
+      "expected_rule_ids": "AP_FMT_VENDOR_CODE",
+      "note": "Malformed vendor code - and it is part of the business key, so letting it through would silently create a phantom break."
+    },
+    {
+      "dataset": "ap",
+      "defect_name": "ap_bad_fiscal_period",
+      "surrogate_key": "AP0000420",
+      "expected_rule_ids": "AP_FMT_FISCAL_PERIOD",
+      "note": "Two-digit year."
+    },
+    {
+      "dataset": "ap",
+      "defect_name": "ap_absurd_amount",
+      "surrogate_key": "AP0000491",
+      "expected_rule_ids": "AP_RANGE_AMOUNT",
+      "note": "Overflow / units error. Parses fine and is non-zero, so only the range check can catch it."
+    },
+    {
+      "dataset": "ap",
+      "defect_name": "ap_unknown_payment_status",
+      "surrogate_key": "AP0000494",
+      "expected_rule_ids": "AP_DOM_PAYMENT_STATUS",
+      "note": "Workflow state from an upstream system version we do not know."
+    },
+    {
+      "dataset": "ap",
+      "defect_name": "ap_duplicate_line_id",
+      "surrogate_key": "AP0000538",
+      "expected_rule_ids": "AP_UNIQ_LINE_ID",
+      "note": "Repeated SURROGATE key - a broken extract, not a double booking. Contrast with DUPLICATE_IN_SUBLEDGER, which repeats the BUSINESS key across two distinct line ids and must reach recon."
+    },
+    {
+      "dataset": "ap",
+      "defect_name": "ap_duplicate_line_id",
+      "surrogate_key": "AP0000538",
+      "expected_rule_ids": "AP_UNIQ_LINE_ID",
+      "note": "Repeated SURROGATE key - a broken extract, not a double booking. Contrast with DUPLICATE_IN_SUBLEDGER, which repeats the BUSINESS key across two distinct line ids and must reach recon."
+    }
+  ],
+  "source_files": {
+    "gl": {
+      "name": "gl.csv",
+      "rows": 940,
+      "sha256": "733d14acefd65b37114dd2f18cc6ff1035dd64a3863265ac1bed987625dfa916"
+    },
+    "ap": {
+      "name": "ap_subledger.csv",
+      "rows": 969,
+      "sha256": "26ac8834a54019afd540ca2ee41a8005f4e0e6b1e6fd0f167e4bcbe0a73c5731"
+    }
+  }
+}
