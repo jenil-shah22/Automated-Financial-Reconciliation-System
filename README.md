@@ -3,11 +3,15 @@
 **A GL-to-subledger reconciliation lakehouse with data contracts, a row-level
 quarantine layer, and a verifiable break taxonomy.**
 
-> **Status: v0.1 in progress — Days 1–3 complete and verified on Databricks.**
+> **Status: v0.1 in progress — Days 1–3 complete and verified on Databricks.
+> Day 4 written and unit-tested, pending cluster verification.**
 > Every number below came from an actual run. Bronze and Silver have been
 > executed against Delta on Databricks serverless, and the PySpark
-> implementation reproduces the independent pandas oracle exactly. Unbuilt work
-> is in [Roadmap](#roadmap) and is not claimed as a feature.
+> implementation reproduces the independent pandas oracle exactly. The break
+> counts quoted below currently come from the pandas oracle; the PySpark
+> reconciliation engine is built and its compiled SQL is tested, but it has not
+> yet been run on a cluster and is marked accordingly. Unbuilt work is in
+> [Roadmap](#roadmap) and is not claimed as a feature.
 
 ---
 
@@ -209,9 +213,11 @@ ledgerlens/
 │   ├── bronze.py                  lossless CSV -> Delta ingest with lineage
 │   ├── quality.py                 compiles contracts.yaml into Spark SQL predicates
 │   ├── silver.py                  contract enforcement + row-level quarantine
+│   ├── recon.py                   matcher + six-way break classifier (PySpark)
+│   ├── gold.py                    recon_detail / recon_summary / recon_exceptions
 │   └── validate.py                independent verifier (pandas oracle)
 ├── notebooks/                     Databricks wrappers (thin - logic lives in src/)
-├── tests/                         113 pytest tests incl. negative controls
+├── tests/                         218 pytest tests incl. negative controls
 └── data/raw/                      generated CSVs (gitignored) + control manifest
 ```
 
@@ -309,13 +315,28 @@ for three different people.
 
 ## Testing
 
-113 tests. The ones that carry weight:
+218 tests, plus 6 skipped as structurally impossible (a business key with no
+rows on either side). The ones that carry weight:
 
 - **Precedence ladder** — one test per status, plus every ordering conflict
-  (duplicate vs mismatch, duplicate vs timing, mismatch vs timing).
+  (duplicate vs mismatch, duplicate vs timing, mismatch vs timing), plus an
+  exhaustive walk of the whole reachable case space: every combination of GL
+  row count, subledger row count, amount relationship and period relationship,
+  checked against a literal transcription of the documented ladder.
 - **Tolerance boundary** — 101.00 against 100.00 is `MATCHED`; 101.01 is a
   break. Pinned because "is exactly 1.00 a break?" is the kind of question two
-  people answer differently six months apart.
+  people answer differently six months apart. Pinned twice: once behaviourally
+  against the pandas oracle, once against the generated SQL, which must compare
+  with `>` and against a `DECIMAL` literal — Spark promotes a DECIMAL-vs-DOUBLE
+  comparison to DOUBLE, which would put the tolerance back on binary floating
+  point at exactly the boundary it defines.
+- **The duplicate guard** — the aggregation must carry `count(*)`. An
+  aggregation that sums but never counts produces a correct total for a
+  duplicated key and no way to know it came from two rows, which deletes all
+  twenty duplicates while the key count still comes to 946.
+- **Published vs executed policy** — `contracts.yaml` declares the precedence
+  ladder for a human audience. A test asserts it equals the ladder the
+  classifier compiles, and the pipeline refuses to run if they disagree.
 - **Negative controls** — drop a row, duplicate a row, repair a planted defect,
   convert a match into a break, tamper with the manifest. Each must make
   verification *fail*. A verification suite that cannot be made to fail is not
@@ -358,22 +379,27 @@ Stated first because a reviewer will find them anyway.
   found this way, not by tests. That class of bug is now guarded structurally
   (no aggregate expression may contain `OVER (`), which is the best a
   JVM-free test can do.
-- **The reconciliation engine is still pandas-only.** Break counts quoted above
-  come from the oracle; the PySpark port is Day 4.
-- **Not yet built:** everything from Day 4 onward — see below.
+- **The PySpark reconciliation is unverified on a cluster.** `recon.py` and
+  `gold.py` are written and their compiled SQL is unit-tested, but the break
+  counts quoted above still come from the pandas oracle. Until
+  `notebooks/03_reconciliation.py` has been run on Databricks, the claim that
+  the two engines agree on the break taxonomy is **not yet evidence** — it is an
+  expectation. Days 2 and 3 earned that claim by running; Day 4 has not.
+- **Not yet built:** everything from Day 5 onward — see below.
 
 ---
 
 ## Roadmap
 
-Marked honestly: none of this is built yet.
+Marked honestly. "Done" means it ran and the numbers were checked; anything
+short of that says so.
 
 | Stage | Scope | Status |
 |---|---|---|
 | Day 1 | Scaffold, generator, planted breaks, manifest, contracts, verifier | **Done** |
 | Day 2 | Explicit schemas, Bronze ingest to Delta | **Done — 1,909 rows ingested losslessly** |
 | Day 3 | Silver layer in PySpark, contract enforcement, quarantine tables | **Done — matches the pandas oracle exactly** |
-| Day 4 | Reconciliation engine + gold tables in PySpark | Not started |
+| Day 4 | Reconciliation engine + gold tables in PySpark | Code written and unit-tested — **not yet run on Databricks** |
 | Day 5 | DQ scorecard, Databricks SQL dashboard | Not started |
 | Day 6 | Data dictionary, metric definitions, runbook | Not started |
 | v0.2 | Variance & driver analysis (rate / volume / mix waterfall) | Not started |
