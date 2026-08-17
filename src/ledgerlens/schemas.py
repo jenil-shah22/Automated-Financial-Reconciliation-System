@@ -59,6 +59,10 @@ _TYPE_MAP: Dict[str, Tuple[str, str]] = {
     "date": ("DateType", "DATE"),
     "timestamp": ("TimestampType", "TIMESTAMP"),
     "decimal_18_2": ("DecimalType", "DECIMAL(18,2)"),
+    # A percentage is not money. It is a ratio rounded for display, so it gets
+    # its own narrow type rather than borrowing the money type and implying a
+    # currency amount. 999.9999 is plenty of headroom for a 0-100 score.
+    "decimal_7_4": ("DecimalType", "DECIMAL(7,4)"),
     "int": ("IntegerType", "INT"),
     "long": ("LongType", "BIGINT"),
     "boolean": ("BooleanType", "BOOLEAN"),
@@ -327,6 +331,63 @@ GOLD_RECON_EXCEPTIONS_SCHEMA: List[Column] = [
 
 
 # =============================================================================
+# Gold - the data-quality scorecard
+# =============================================================================
+# Two tables, at two different grains, because they answer two different
+# questions. "Is the data fit to reconcile?" is a per-dataset question.
+# "What is wrong with it?" is a per-rule question. Collapsing them into one
+# table would force one of the two to be answered by a filter.
+GOLD_DQ_SCORECARD_SCHEMA: List[Column] = [
+    Column("dataset", "string", False, "Source dataset: 'gl' or 'ap'."),
+    Column("label", "string", False,
+           "Human-readable dataset name, from contracts.yaml."),
+    Column("rows_received", "long", False,
+           "Rows that arrived in bronze. The DQ denominator is what we were "
+           "SENT, not what we kept - measuring against what survived would "
+           "score 100% on any input."),
+    Column("rows_passed", "long", False, "Rows that satisfied every contract rule."),
+    Column("rows_quarantined", "long", False,
+           "Rows rejected. rows_passed + rows_quarantined = rows_received, "
+           "asserted on every run: no row is ever silently dropped."),
+    Column("rule_violations", "long", False,
+           "Total rule breaches. EXCEEDS rows_quarantined when a row breaches "
+           "more than one rule - which is the point of recording rule ids as a "
+           "list. Never use this as a row count."),
+    Column("dq_score_pct", "decimal_7_4", False,
+           "100 * rows_passed / rows_received, to 4dp. Per dataset. To get an "
+           "overall score, sum the numerators and denominators - averaging the "
+           "per-dataset scores weights a small dataset equally with a large one."),
+]
+
+GOLD_DQ_RULE_SCORECARD_SCHEMA: List[Column] = [
+    Column("rule_id", "string", False,
+           "Permanent contract rule id. Stamped onto every row it rejects, so "
+           "ids are never recycled - a reused id would silently change the "
+           "meaning of historical quarantine records."),
+    Column("dataset", "string", False, "Dataset the rule applies to."),
+    Column("column_name", "string", False, "Column the rule tests."),
+    Column("check_type", "string", False,
+           "Kind of assertion: not_null, unique, regex, allowed_values, "
+           "numeric, non_zero, numeric_range."),
+    Column("severity", "string", False,
+           "'reject' quarantines the row; 'warn' would let it through flagged."),
+    Column("description", "string", False,
+           "The rule's intent, in the words of whoever wrote the contract."),
+    Column("predicate_sql", "string", False,
+           "The exact Spark SQL the pipeline evaluated, TRUE where violated. "
+           "This is what makes the scorecard evidence rather than assertion: "
+           "the count and the logic that produced it sit in the same row, and "
+           "the dashboard cannot drift from the pipeline because it is reading "
+           "the pipeline's own predicate."),
+    Column("rows_rejected", "long", False,
+           "Rows this rule rejected. Zero-firing rules are kept: a rule that "
+           "stops firing is as much a signal as one that starts, and a list of "
+           "only non-zero rules cannot tell 'clean' from 'that check silently "
+           "stopped running'."),
+]
+
+
+# =============================================================================
 # Conversions
 # =============================================================================
 def to_sql_type(dtype: str) -> str:
@@ -345,6 +406,8 @@ def to_spark_schema(columns: Sequence[Column]):
         spark_name, _ = _TYPE_MAP[col.dtype]
         if col.dtype == "decimal_18_2":
             spark_type: Any = T.DecimalType(18, 2)
+        elif col.dtype == "decimal_7_4":
+            spark_type = T.DecimalType(7, 4)
         else:
             spark_type = getattr(T, spark_name)()
         fields.append(T.StructField(col.name, spark_type, col.nullable))
@@ -404,4 +467,6 @@ SCHEMAS: Dict[str, List[Column]] = {
     "gold_recon_detail": GOLD_RECON_DETAIL_SCHEMA,
     "gold_recon_summary": GOLD_RECON_SUMMARY_SCHEMA,
     "gold_recon_exceptions": GOLD_RECON_EXCEPTIONS_SCHEMA,
+    "gold_dq_scorecard": GOLD_DQ_SCORECARD_SCHEMA,
+    "gold_dq_rule_scorecard": GOLD_DQ_RULE_SCORECARD_SCHEMA,
 }
