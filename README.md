@@ -3,17 +3,15 @@
 **A GL-to-subledger reconciliation lakehouse with data contracts, a row-level
 quarantine layer, and a verifiable break taxonomy.**
 
-> **Status: v0.1 — Days 1–4 complete and verified on Databricks. Day 5 code
-> written and unit-tested, pending cluster verification. Day 6 documentation
-> complete.**
-> Every number below came from an actual run. Bronze, Silver, the
-> reconciliation engine and the gold tables have all been executed against Delta
-> on Databricks serverless, and the PySpark implementation reproduces the
-> independent pandas oracle exactly — including all six break counts. The DQ
-> scorecard (`scorecard.py`, notebook `04`) is built and unit-tested but has not
-> yet been run on a cluster, and the dashboard itself is not built — both are
-> marked accordingly below. Unbuilt work is in [Roadmap](#roadmap) and is not
-> claimed as a feature.
+> **Status: v0.1 — the whole pipeline is built, executed on Databricks, and
+> verified against an independent implementation.**
+> Every number below came from an actual run. Bronze, Silver, the reconciliation
+> engine, the gold tables and the DQ scorecard have all been executed against
+> Delta on Databricks serverless, and the PySpark implementation reproduces the
+> independent pandas oracle exactly — all six break counts, all 37 contract
+> rules, and the DQ score to four decimal places. The dashboard itself is
+> **specified but not built**; that is marked accordingly below. Unbuilt work is
+> in [Roadmap](#roadmap) and is not claimed as a feature.
 
 ---
 
@@ -150,6 +148,9 @@ PySpark pipeline on Databricks serverless against the same manifest:
 | `DUPLICATE_IN_SUBLEDGER` | 20 | **20** |
 | Business keys reconciled | 946 | **946** |
 | Exceptions (non-`MATCHED`) | 126 | **126** |
+| Rows received / passed | 1,909 / 1,885 | **1,909 / 1,885** |
+| Rows quarantined / rule violations | 24 / 26 | **24 / 26** |
+| Per-rule counts, all 37 rules | match | **match** |
 
 Two implementations, two engines, two languages, identical numbers — on the
 quarantine, the DQ score **and** the break taxonomy.
@@ -430,9 +431,6 @@ Stated first because a reviewer will find them anyway.
   found this way, not by tests. That class of bug is now guarded structurally
   (no aggregate expression may contain `OVER (`), which is the best a
   JVM-free test can do.
-- **The DQ scorecard is unverified on a cluster.** `scorecard.py` and notebook
-  `04` are written and unit-tested, but they have not been run on Databricks.
-  Days 2–4 earned their "verified" label by running; this has not.
 - **The dashboard is not built.** A Databricks dashboard lives in a workspace,
   not in a repo, so what is committed is the *specification*: every tile, its
   query, its visualisation type and the question it answers, in
@@ -456,7 +454,7 @@ short of that says so.
 | Day 2 | Explicit schemas, Bronze ingest to Delta | **Done — 1,909 rows ingested losslessly** |
 | Day 3 | Silver layer in PySpark, contract enforcement, quarantine tables | **Done — matches the pandas oracle exactly** |
 | Day 4 | Reconciliation engine + gold tables in PySpark | **Done — all six break counts match the pandas oracle exactly** |
-| Day 5 | DQ scorecard tables in PySpark | Code written and unit-tested — **not yet run on Databricks** |
+| Day 5 | DQ scorecard tables in PySpark | **Done — reproduces the manifest exactly, all 37 rules** |
 | Day 5 | Dashboard | **Specified, not built** — layout and queries committed under `docs/` |
 | Day 6 | Data dictionary, metric definitions, runbook | **Done** |
 | v0.2 | Variance & driver analysis (rate / volume / mix waterfall) | Not started |
