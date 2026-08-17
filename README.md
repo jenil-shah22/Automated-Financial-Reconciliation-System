@@ -3,10 +3,11 @@
 **A GL-to-subledger reconciliation lakehouse with data contracts, a row-level
 quarantine layer, and a verifiable break taxonomy.**
 
-> **Status: v0.1 in progress — Day 1 complete; Days 2–3 written, not yet
-> executed against Delta.** Every number below came from an actual run. The
-> Spark layers are written and unit-tested but await a Databricks run, and are
-> marked as such rather than claimed. Unbuilt work is in [Roadmap](#roadmap).
+> **Status: v0.1 in progress — Days 1–3 complete and verified on Databricks.**
+> Every number below came from an actual run. Bronze and Silver have been
+> executed against Delta on Databricks serverless, and the PySpark
+> implementation reproduces the independent pandas oracle exactly. Unbuilt work
+> is in [Roadmap](#roadmap) and is not claimed as a feature.
 
 ---
 
@@ -120,6 +121,29 @@ From `python -m ledgerlens.validate` on seed 42:
 **56 checks, 0 failures.** Every one of the 34 contract rules is asserted,
 including the 21 expected to fire zero times — a rule that suddenly starts
 rejecting rows is as much a signal as one that stops.
+
+### Cross-engine verification
+
+The pipeline is implemented **twice**: once in pandas as the reference oracle,
+once in PySpark as the production path. They share no code. Running the PySpark
+silver layer on Databricks serverless against the same manifest:
+
+| | pandas oracle | PySpark on Databricks |
+|---|---|---|
+| GL rows quarantined | 10 | **10** |
+| GL rule violations | 12 | **12** |
+| AP rows quarantined | 14 | **14** |
+| AP rule violations | 14 | **14** |
+| Rows surviving to silver | 1,885 | **1,885** |
+| DQ score | 98.7428% | **98.7428%** |
+
+Two independent implementations, two engines, two languages, identical numbers.
+
+The GL asymmetry is the interesting column: **10 rows produce 12 violations**,
+because two rows breach two rules each — a malformed department code that trips
+both the format *and* the domain check, and a row carrying both a null amount
+and a bad currency. An engine that short-circuited on first failure would report
+10 and 10, and the totals would still look entirely plausible.
 
 ### Why the manifest exists
 
@@ -322,17 +346,20 @@ Stated first because a reviewer will find them anyway.
 - **The verifier shares an author with the generator.** Differential testing
   catches implementation slips, not a shared misunderstanding of the spec.
   That is what the written break taxonomy and the unit tests are for.
-- **The Spark layers have not been executed against Delta yet.** `bronze.py` and
-  `silver.py` are written, and everything JVM-free about them is unit-tested —
-  the SQL for all 34 rules, the schema contracts, the header check, row-count
-  logic. But the Spark execution path is unrun. Local Spark would not start on
-  the development machine: Netty could not open a loopback connection inside
-  the JVM (`failed to create a child event loop`), which is endpoint-security
-  software blocking `java.exe`, not a pipeline fault — Python loopback on the
-  same machine works fine. These layers therefore run on Databricks, and the
-  local path stays a documented fallback rather than a verified one. **The
-  quarantine and break counts quoted above are from the pandas oracle**, which
-  is the specification the Spark implementation must reproduce.
+- **The local Spark path is unverified.** Bronze and Silver run on Databricks,
+  but local Spark will not start on the development machine: Netty cannot open
+  a loopback connection inside the JVM (`failed to create a child event loop`),
+  which is endpoint-security software blocking `java.exe`, not a pipeline fault
+  — Python loopback on the same machine works fine. `LakehouseConfig(mode="path")`
+  is therefore a documented fallback, not a tested one.
+- **Some Spark errors are only reachable on a cluster.** Compiling rules to SQL
+  makes the predicates unit-testable without a JVM, but Spark rejects some
+  constructs at *parse* time — a window function nested inside an aggregate was
+  found this way, not by tests. That class of bug is now guarded structurally
+  (no aggregate expression may contain `OVER (`), which is the best a
+  JVM-free test can do.
+- **The reconciliation engine is still pandas-only.** Break counts quoted above
+  come from the oracle; the PySpark port is Day 4.
 - **Not yet built:** everything from Day 4 onward — see below.
 
 ---
@@ -344,8 +371,8 @@ Marked honestly: none of this is built yet.
 | Stage | Scope | Status |
 |---|---|---|
 | Day 1 | Scaffold, generator, planted breaks, manifest, contracts, verifier | **Done** |
-| Day 2 | Explicit schemas, Bronze ingest, Databricks notebook | **Written, not yet executed against Delta** |
-| Day 3 | Silver layer in PySpark, contract enforcement, quarantine tables | **Written, not yet executed against Delta** |
+| Day 2 | Explicit schemas, Bronze ingest to Delta | **Done — 1,909 rows ingested losslessly** |
+| Day 3 | Silver layer in PySpark, contract enforcement, quarantine tables | **Done — matches the pandas oracle exactly** |
 | Day 4 | Reconciliation engine + gold tables in PySpark | Not started |
 | Day 5 | DQ scorecard, Databricks SQL dashboard | Not started |
 | Day 6 | Data dictionary, metric definitions, runbook | Not started |
