@@ -3,15 +3,17 @@
 **A GL-to-subledger reconciliation lakehouse with data contracts, a row-level
 quarantine layer, and a verifiable break taxonomy.**
 
-> **Status: v0.1 in progress — Days 1–3 complete and verified on Databricks.
-> Day 4 written and unit-tested, pending cluster verification.**
-> Every number below came from an actual run. Bronze and Silver have been
-> executed against Delta on Databricks serverless, and the PySpark
-> implementation reproduces the independent pandas oracle exactly. The break
-> counts quoted below currently come from the pandas oracle; the PySpark
-> reconciliation engine is built and its compiled SQL is tested, but it has not
-> yet been run on a cluster and is marked accordingly. Unbuilt work is in
-> [Roadmap](#roadmap) and is not claimed as a feature.
+> **Status: v0.1 — Days 1–4 complete and verified on Databricks. Day 5 code
+> written and unit-tested, pending cluster verification. Day 6 documentation
+> complete.**
+> Every number below came from an actual run. Bronze, Silver, the
+> reconciliation engine and the gold tables have all been executed against Delta
+> on Databricks serverless, and the PySpark implementation reproduces the
+> independent pandas oracle exactly — including all six break counts. The DQ
+> scorecard (`scorecard.py`, notebook `04`) is built and unit-tested but has not
+> yet been run on a cluster, and the dashboard itself is not built — both are
+> marked accordingly below. Unbuilt work is in [Roadmap](#roadmap) and is not
+> claimed as a feature.
 
 ---
 
@@ -122,15 +124,15 @@ From `python -m ledgerlens.validate` on seed 42:
 | Business keys reconciled | 946 | 946 |
 | Quarantined rows with no rule id | 0 | 0 |
 
-**56 checks, 0 failures.** Every one of the 34 contract rules is asserted,
+**56 checks, 0 failures.** Every one of the 37 contract rules is asserted,
 including the 21 expected to fire zero times — a rule that suddenly starts
 rejecting rows is as much a signal as one that stops.
 
 ### Cross-engine verification
 
 The pipeline is implemented **twice**: once in pandas as the reference oracle,
-once in PySpark as the production path. They share no code. Running the PySpark
-silver layer on Databricks serverless against the same manifest:
+once in PySpark as the production path. They share no code. Running the full
+PySpark pipeline on Databricks serverless against the same manifest:
 
 | | pandas oracle | PySpark on Databricks |
 |---|---|---|
@@ -140,8 +142,24 @@ silver layer on Databricks serverless against the same manifest:
 | AP rule violations | 14 | **14** |
 | Rows surviving to silver | 1,885 | **1,885** |
 | DQ score | 98.7428% | **98.7428%** |
+| `MATCHED` | 820 | **820** |
+| `AMOUNT_MISMATCH` | 40 | **40** |
+| `TIMING_DIFFERENCE` | 35 | **35** |
+| `MISSING_FROM_SUBLEDGER` | 15 | **15** |
+| `MISSING_FROM_GL` | 16 | **16** |
+| `DUPLICATE_IN_SUBLEDGER` | 20 | **20** |
+| Business keys reconciled | 946 | **946** |
+| Exceptions (non-`MATCHED`) | 126 | **126** |
 
-Two independent implementations, two engines, two languages, identical numbers.
+Two implementations, two engines, two languages, identical numbers — on the
+quarantine, the DQ score **and** the break taxonomy.
+
+The notebook also asserts the four planted edge-case populations, because a
+correct total can still be right for the wrong reasons: 60 pairs differing by
+sub-tolerance rounding must stay `MATCHED`, 5 keys where amount *and* period
+both moved must be `AMOUNT_MISMATCH`, 4 duplicates must be triplets rather than
+pairs, and 5 duplicates whose copies carry unequal amounts must still be
+`DUPLICATE_IN_SUBLEDGER`. All four land in the right bucket.
 
 The GL asymmetry is the interesting column: **10 rows produce 12 violations**,
 because two rows breach two rules each — a malformed department code that trips
@@ -215,15 +233,48 @@ ledgerlens/
 │   ├── silver.py                  contract enforcement + row-level quarantine
 │   ├── recon.py                   matcher + six-way break classifier (PySpark)
 │   ├── gold.py                    recon_detail / recon_summary / recon_exceptions
+│   ├── scorecard.py               DQ scorecard + per-rule violation counts
+│   ├── docs_gen.py                generates docs/data_dictionary.md from schemas.py
 │   └── validate.py                independent verifier (pandas oracle)
 ├── notebooks/                     Databricks wrappers (thin - logic lives in src/)
-├── tests/                         218 pytest tests incl. negative controls
+│   ├── 01_bronze_ingest.py        03_reconciliation.py
+│   └── 02_silver_contracts.py     04_dq_scorecard.py
+├── docs/
+│   ├── data_dictionary.md         GENERATED from schemas.py - every column
+│   ├── metric_definitions.md      every KPI defined exactly once
+│   ├── dashboard_layout.md        tile-by-tile dashboard specification
+│   ├── dashboard_queries.sql      the query behind each tile
+│   └── runbook.md                 how to run it, what breaks, who owns what
+├── tests/                         236 pytest tests incl. negative controls
 └── data/raw/                      generated CSVs (gitignored) + control manifest
 ```
 
 Notebooks are deliberately **thin wrappers**. Logic lives in `src/` because a
 notebook cannot be unit-tested and cannot be reviewed properly in a pull
 request.
+
+---
+
+## Documentation
+
+| Document | What it is for |
+|---|---|
+| [`docs/data_dictionary.md`](docs/data_dictionary.md) | Every column in every layer, with its type and meaning |
+| [`docs/metric_definitions.md`](docs/metric_definitions.md) | Every KPI defined exactly once |
+| [`docs/dashboard_layout.md`](docs/dashboard_layout.md) | Tile-by-tile dashboard specification |
+| [`docs/dashboard_queries.sql`](docs/dashboard_queries.sql) | The query behind each tile |
+| [`docs/runbook.md`](docs/runbook.md) | How to run it, what breaks, who owns what |
+
+**The data dictionary is generated, not written.** A hand-maintained dictionary
+is correct on the day it is written and silently wrong a month later, because
+nobody diffs prose against code. The descriptions live on the `Column` objects in
+`schemas.py` — the same objects that generate the Spark `StructType` and the SQL
+DDL — and `tests/test_docs.py` fails if the committed file is stale. That turns
+"keep the docs updated" from a discipline into a build error.
+
+```bash
+python -m ledgerlens.docs_gen
+```
 
 ---
 
@@ -291,7 +342,7 @@ types.
 `contracts.yaml` becomes a Spark SQL expression that is TRUE when the rule is
 violated. Three reasons:
 
-1. **Testable without a JVM** — the exact predicate for all 34 rules is asserted
+1. **Testable without a JVM** — the exact predicate for all 37 rules is asserted
    in CI with no cluster. Only execution needs Spark.
 2. **Auditable** — *"GL_NONZERO_AMOUNT rejected 2 rows"* is an assertion; the
    generated SQL printed beside it is the evidence. A `Column` object is opaque.
@@ -315,7 +366,7 @@ for three different people.
 
 ## Testing
 
-218 tests, plus 6 skipped as structurally impossible (a business key with no
+236 tests, plus 6 skipped as structurally impossible (a business key with no
 rows on either side). The ones that carry weight:
 
 - **Precedence ladder** — one test per status, plus every ordering conflict
@@ -379,13 +430,18 @@ Stated first because a reviewer will find them anyway.
   found this way, not by tests. That class of bug is now guarded structurally
   (no aggregate expression may contain `OVER (`), which is the best a
   JVM-free test can do.
-- **The PySpark reconciliation is unverified on a cluster.** `recon.py` and
-  `gold.py` are written and their compiled SQL is unit-tested, but the break
-  counts quoted above still come from the pandas oracle. Until
-  `notebooks/03_reconciliation.py` has been run on Databricks, the claim that
-  the two engines agree on the break taxonomy is **not yet evidence** — it is an
-  expectation. Days 2 and 3 earned that claim by running; Day 4 has not.
-- **Not yet built:** everything from Day 5 onward — see below.
+- **The DQ scorecard is unverified on a cluster.** `scorecard.py` and notebook
+  `04` are written and unit-tested, but they have not been run on Databricks.
+  Days 2–4 earned their "verified" label by running; this has not.
+- **The dashboard is not built.** A Databricks dashboard lives in a workspace,
+  not in a repo, so what is committed is the *specification*: every tile, its
+  query, its visualisation type and the question it answers, in
+  [`docs/dashboard_layout.md`](docs/dashboard_layout.md) and
+  [`docs/dashboard_queries.sql`](docs/dashboard_queries.sql). Databricks Free
+  Edition also limits dashboard functionality, so this may land as a notebook
+  with charts rather than a true Databricks SQL dashboard — if it does, it will
+  be described as that.
+- **Not yet built:** everything from v0.2 onward — see below.
 
 ---
 
@@ -399,9 +455,10 @@ short of that says so.
 | Day 1 | Scaffold, generator, planted breaks, manifest, contracts, verifier | **Done** |
 | Day 2 | Explicit schemas, Bronze ingest to Delta | **Done — 1,909 rows ingested losslessly** |
 | Day 3 | Silver layer in PySpark, contract enforcement, quarantine tables | **Done — matches the pandas oracle exactly** |
-| Day 4 | Reconciliation engine + gold tables in PySpark | Code written and unit-tested — **not yet run on Databricks** |
-| Day 5 | DQ scorecard, Databricks SQL dashboard | Not started |
-| Day 6 | Data dictionary, metric definitions, runbook | Not started |
+| Day 4 | Reconciliation engine + gold tables in PySpark | **Done — all six break counts match the pandas oracle exactly** |
+| Day 5 | DQ scorecard tables in PySpark | Code written and unit-tested — **not yet run on Databricks** |
+| Day 5 | Dashboard | **Specified, not built** — layout and queries committed under `docs/` |
+| Day 6 | Data dictionary, metric definitions, runbook | **Done** |
 | v0.2 | Variance & driver analysis (rate / volume / mix waterfall) | Not started |
 | v0.3 | Anomaly detection (z-score, Isolation Forest) | Not started |
 | v0.4 | Break aging and SLA breach tracking | Not started |
