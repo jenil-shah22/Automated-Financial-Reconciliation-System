@@ -3,15 +3,12 @@
 **A GL-to-subledger reconciliation lakehouse with data contracts, a row-level
 quarantine layer, and a verifiable break taxonomy.**
 
-> **Status: v0.1 in progress — Days 1–3 complete and verified on Databricks.
-> Day 4 written and unit-tested, pending cluster verification.**
-> Every number below came from an actual run. Bronze and Silver have been
-> executed against Delta on Databricks serverless, and the PySpark
-> implementation reproduces the independent pandas oracle exactly. The break
-> counts quoted below currently come from the pandas oracle; the PySpark
-> reconciliation engine is built and its compiled SQL is tested, but it has not
-> yet been run on a cluster and is marked accordingly. Unbuilt work is in
-> [Roadmap](#roadmap) and is not claimed as a feature.
+> **Status: v0.1 in progress — Days 1–4 complete and verified on Databricks.**
+> Every number below came from an actual run. Bronze, Silver, the
+> reconciliation engine and the gold tables have all been executed against Delta
+> on Databricks serverless, and the PySpark implementation reproduces the
+> independent pandas oracle exactly — including all six break counts. Unbuilt
+> work is in [Roadmap](#roadmap) and is not claimed as a feature.
 
 ---
 
@@ -129,8 +126,8 @@ rejecting rows is as much a signal as one that stops.
 ### Cross-engine verification
 
 The pipeline is implemented **twice**: once in pandas as the reference oracle,
-once in PySpark as the production path. They share no code. Running the PySpark
-silver layer on Databricks serverless against the same manifest:
+once in PySpark as the production path. They share no code. Running the full
+PySpark pipeline on Databricks serverless against the same manifest:
 
 | | pandas oracle | PySpark on Databricks |
 |---|---|---|
@@ -140,6 +137,24 @@ silver layer on Databricks serverless against the same manifest:
 | AP rule violations | 14 | **14** |
 | Rows surviving to silver | 1,885 | **1,885** |
 | DQ score | 98.7428% | **98.7428%** |
+| `MATCHED` | 820 | **820** |
+| `AMOUNT_MISMATCH` | 40 | **40** |
+| `TIMING_DIFFERENCE` | 35 | **35** |
+| `MISSING_FROM_SUBLEDGER` | 15 | **15** |
+| `MISSING_FROM_GL` | 16 | **16** |
+| `DUPLICATE_IN_SUBLEDGER` | 20 | **20** |
+| Business keys reconciled | 946 | **946** |
+| Exceptions (non-`MATCHED`) | 126 | **126** |
+
+Two implementations, two engines, two languages, identical numbers — on the
+quarantine, the DQ score **and** the break taxonomy.
+
+The notebook also asserts the four planted edge-case populations, because a
+correct total can still be right for the wrong reasons: 60 pairs differing by
+sub-tolerance rounding must stay `MATCHED`, 5 keys where amount *and* period
+both moved must be `AMOUNT_MISMATCH`, 4 duplicates must be triplets rather than
+pairs, and 5 duplicates whose copies carry unequal amounts must still be
+`DUPLICATE_IN_SUBLEDGER`. All four land in the right bucket.
 
 Two independent implementations, two engines, two languages, identical numbers.
 
@@ -379,12 +394,8 @@ Stated first because a reviewer will find them anyway.
   found this way, not by tests. That class of bug is now guarded structurally
   (no aggregate expression may contain `OVER (`), which is the best a
   JVM-free test can do.
-- **The PySpark reconciliation is unverified on a cluster.** `recon.py` and
-  `gold.py` are written and their compiled SQL is unit-tested, but the break
-  counts quoted above still come from the pandas oracle. Until
-  `notebooks/03_reconciliation.py` has been run on Databricks, the claim that
-  the two engines agree on the break taxonomy is **not yet evidence** — it is an
-  expectation. Days 2 and 3 earned that claim by running; Day 4 has not.
+- **No DQ scorecard or dashboard yet.** The gold tables exist and are queryable,
+  but nothing visualises them; that is Day 5.
 - **Not yet built:** everything from Day 5 onward — see below.
 
 ---
@@ -399,7 +410,7 @@ short of that says so.
 | Day 1 | Scaffold, generator, planted breaks, manifest, contracts, verifier | **Done** |
 | Day 2 | Explicit schemas, Bronze ingest to Delta | **Done — 1,909 rows ingested losslessly** |
 | Day 3 | Silver layer in PySpark, contract enforcement, quarantine tables | **Done — matches the pandas oracle exactly** |
-| Day 4 | Reconciliation engine + gold tables in PySpark | Code written and unit-tested — **not yet run on Databricks** |
+| Day 4 | Reconciliation engine + gold tables in PySpark | **Done — all six break counts match the pandas oracle exactly** |
 | Day 5 | DQ scorecard, Databricks SQL dashboard | Not started |
 | Day 6 | Data dictionary, metric definitions, runbook | Not started |
 | v0.2 | Variance & driver analysis (rate / volume / mix waterfall) | Not started |
