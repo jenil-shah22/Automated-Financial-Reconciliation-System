@@ -209,10 +209,15 @@ def process_dataset(
     is_path = bronze_cfg.mode == "path"
 
     bronze = read_delta(spark, bronze_cfg.target(table), is_path)
-    # Cached: the frame is scanned three times below (count, split, counts) and
-    # recomputing the window functions in the uniqueness rules each time is the
-    # difference between seconds and minutes on a real dataset.
-    annotated = annotate(bronze, rules).cache()
+
+    # Deliberately NOT cached. The annotated frame is scanned more than once
+    # below, and on a classic cluster `.cache()` would avoid recomputing the
+    # window functions behind the uniqueness rules. Serverless compute rejects
+    # explicit persistence outright (NOT_SUPPORTED_WITH_SERVERLESS) because it
+    # manages its own caching, so the choice is made for us. Leaving the hint
+    # in would trade a portability bug for an optimisation the platform
+    # already performs - and at this data volume it is not measurable anyway.
+    annotated = annotate(bronze, rules)
 
     bronze_rows = bronze.count()
     clean, quarantined = split(annotated)
@@ -229,8 +234,6 @@ def process_dataset(
     silver_rows = read_delta(spark, silver_target, is_path).count()
     quarantine_rows = read_delta(spark, quarantine_target, is_path).count()
     violations = rule_violation_counts(bronze, rules)
-
-    annotated.unpersist()
 
     result = SilverResult(
         dataset=dataset,

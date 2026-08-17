@@ -94,7 +94,14 @@ class LakehouseConfig:
 # Spark session
 # =============================================================================
 def get_spark(app_name: str = "ledgerlens") -> "SparkSession":
-    """Return the ambient Databricks session, or build a local Delta one."""
+    """Return the ambient Databricks session, or build a local Delta one.
+
+    The early return is load-bearing, not a shortcut. Everything below it -
+    `.config(...)` on a session builder, `sparkContext.setLogLevel` - is
+    rejected by Databricks serverless compute, which owns its own
+    configuration. Returning the ambient session first means none of that code
+    is ever reached there. Do not move configuration above this guard.
+    """
     from pyspark.sql import SparkSession
 
     active = SparkSession.getActiveSession()
