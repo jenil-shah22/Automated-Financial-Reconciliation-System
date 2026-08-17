@@ -64,17 +64,25 @@ print("ledgerlens", ledgerlens.__version__)
 
 # COMMAND ----------
 
+# removeAll() first so re-running the notebook cannot leave a stale widget
+# behind from an earlier version of this cell.
+dbutils.widgets.removeAll()
+
 dbutils.widgets.text("catalog", "workspace", "Catalog")
-dbutils.widgets.text("bronze_schema", "bronze", "Bronze schema")
 dbutils.widgets.text(
     "raw_path", "/Volumes/workspace/raw/landing", "Raw volume path"
 )
 
 CATALOG = dbutils.widgets.get("catalog")
-BRONZE_SCHEMA = dbutils.widgets.get("bronze_schema")
 RAW_PATH = dbutils.widgets.get("raw_path")
 
-print(f"catalog={CATALOG}  schema={BRONZE_SCHEMA}  raw={RAW_PATH}")
+# Set the session catalog once, so every %sql cell below can use plain
+# two-part names (bronze.gl). The schema names are NOT parameterised: bronze,
+# silver and quarantine are the medallion architecture itself, not deployment
+# settings, and making them configurable would be false flexibility.
+spark.sql(f"USE CATALOG {CATALOG}")
+
+print(f"catalog={CATALOG}  raw={RAW_PATH}")
 
 # COMMAND ----------
 
@@ -120,9 +128,7 @@ print(schemas.to_ddl(schemas.BRONZE_AP_SCHEMA))
 
 # COMMAND ----------
 
-cfg = bronze.LakehouseConfig(
-    mode="catalog", catalog=CATALOG, schema=BRONZE_SCHEMA
-)
+cfg = bronze.LakehouseConfig(mode="catalog", catalog=CATALOG, schema="bronze")
 
 results = bronze.run(raw_dir=Path(RAW_PATH), cfg=cfg, spark=spark)
 
@@ -174,14 +180,14 @@ print("\nBronze ingest is lossless and matches the manifest.")
 # COMMAND ----------
 
 # MAGIC %sql
-# MAGIC SELECT * FROM identifier(:catalog || '.' || :bronze_schema || '.gl') LIMIT 10;
+# MAGIC SELECT * FROM bronze.gl LIMIT 10;
 
 # COMMAND ----------
 
 # MAGIC %sql
 # MAGIC -- The defects that survived ingest, exactly as received.
 # MAGIC SELECT ap_line_id, invoice_number, amount, currency, fiscal_period, payment_status
-# MAGIC FROM identifier(:catalog || '.' || :bronze_schema || '.ap_subledger')
+# MAGIC FROM bronze.ap_subledger
 # MAGIC WHERE amount = '' OR amount = 'N/A' OR currency <> 'USD'
 # MAGIC    OR fiscal_period NOT RLIKE '^[0-9]{4}-(0[1-9]|1[0-2])$'
 # MAGIC ORDER BY ap_line_id;
@@ -199,7 +205,7 @@ print("\nBronze ingest is lossless and matches the manifest.")
 # COMMAND ----------
 
 # MAGIC %sql
-# MAGIC DESCRIBE HISTORY identifier(:catalog || '.' || :bronze_schema || '.gl');
+# MAGIC DESCRIBE HISTORY bronze.gl;
 
 # COMMAND ----------
 

@@ -46,11 +46,18 @@ contracts = load_contracts()
 
 # COMMAND ----------
 
+dbutils.widgets.removeAll()
+
 dbutils.widgets.text("catalog", "workspace", "Catalog")
 dbutils.widgets.text("raw_path", "/Volumes/workspace/raw/landing", "Raw volume path")
 
 CATALOG = dbutils.widgets.get("catalog")
 RAW_PATH = dbutils.widgets.get("raw_path")
+
+# Set the session catalog once so the %sql cells below use plain two-part
+# names. Databricks `identifier()` requires a constant string and will not
+# accept `||` concatenation of parameter markers.
+spark.sql(f"USE CATALOG {CATALOG}")
 
 # COMMAND ----------
 
@@ -189,7 +196,7 @@ for r in results:
 # MAGIC %sql
 # MAGIC SELECT _failed_rule_ids, _failed_rule_count, ap_line_id, invoice_number,
 # MAGIC        amount, currency, fiscal_period, vendor_code, payment_status
-# MAGIC FROM identifier(:catalog || '.quarantine.ap_subledger')
+# MAGIC FROM quarantine.ap_subledger
 # MAGIC ORDER BY _failed_rule_count DESC, _failed_rule_ids;
 
 # COMMAND ----------
@@ -199,9 +206,9 @@ for r in results:
 # MAGIC SELECT _failed_rule_ids AS rule_combination,
 # MAGIC        count(*) AS rows_rejected
 # MAGIC FROM (
-# MAGIC   SELECT _failed_rule_ids FROM identifier(:catalog || '.quarantine.gl')
+# MAGIC   SELECT _failed_rule_ids FROM quarantine.gl
 # MAGIC   UNION ALL
-# MAGIC   SELECT _failed_rule_ids FROM identifier(:catalog || '.quarantine.ap_subledger')
+# MAGIC   SELECT _failed_rule_ids FROM quarantine.ap_subledger
 # MAGIC )
 # MAGIC GROUP BY _failed_rule_ids
 # MAGIC ORDER BY rows_rejected DESC;
@@ -225,7 +232,7 @@ for r in results:
 # COMMAND ----------
 
 # MAGIC %sql
-# MAGIC DESCRIBE identifier(:catalog || '.silver.ap_subledger');
+# MAGIC DESCRIBE silver.ap_subledger;
 
 # COMMAND ----------
 
