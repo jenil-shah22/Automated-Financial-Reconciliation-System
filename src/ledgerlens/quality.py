@@ -168,15 +168,40 @@ def failed_rule_count_expr(ids_column: str = "_failed_rule_ids") -> str:
     )
 
 
-def rule_violation_exprs(rules: Sequence[Dict[str, Any]]) -> Dict[str, str]:
-    """Per-rule counting expressions, for the DQ scorecard.
+# Counting violations takes TWO steps, and the reason is not stylistic.
+#
+# The obvious one-step form is `count_if(<predicate>)`. It works for every check
+# type except `unique`, whose predicate contains `count(*) OVER (PARTITION BY
+# ...)`. Spark rejects a window function nested inside an aggregate:
+#
+#   "It is not allowed to use a window function inside an aggregate function.
+#    Please use the inner window function in a sub-query."
+#
+# Windows are legal in a projection, illegal inside an aggregate. So the
+# predicate is projected to a boolean flag first, and the flags are aggregated
+# second. Splitting the steps costs nothing and works for every check type,
+# which is better than special-casing the one rule that needs it.
+FLAG_PREFIX = "flag_"
+
+
+def flag_column(rule_id: str) -> str:
+    return f"{FLAG_PREFIX}{rule_id}"
+
+
+def rule_flag_exprs(rules: Sequence[Dict[str, Any]]) -> Dict[str, str]:
+    """Step 1: rule id -> predicate, projected as a boolean column."""
+    return {rule["id"]: predicate_for(rule) for rule in reject_rules(rules)}
+
+
+def rule_count_exprs(rules: Sequence[Dict[str, Any]]) -> Dict[str, str]:
+    """Step 2: rule id -> aggregate over the projected flag.
 
     Keyed by rule id so the scorecard reports 'GL_NONZERO_AMOUNT: 2' rather
     than an anonymous total. A rule that suddenly starts firing is as much a
     signal as one that stops, which is why zero-count rules stay in the output.
     """
     return {
-        rule["id"]: f"count_if({predicate_for(rule)})"
+        rule["id"]: f"count_if(`{flag_column(rule['id'])}`)"
         for rule in reject_rules(rules)
     }
 

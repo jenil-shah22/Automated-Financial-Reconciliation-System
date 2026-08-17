@@ -45,8 +45,10 @@ from .quality import (
     assert_patterns_compile,
     failed_rule_count_expr,
     failed_rule_ids_expr,
+    flag_column,
     reject_rules,
-    rule_violation_exprs,
+    rule_count_exprs,
+    rule_flag_exprs,
 )
 from .schemas import (
     BRONZE_AP_SCHEMA,
@@ -153,18 +155,30 @@ def rule_violation_counts(
 ) -> Dict[str, int]:
     """Per-rule violation counts, including the rules that fired zero times.
 
-    Zero-count rules are reported deliberately. A rule that suddenly starts
-    rejecting rows is as much a signal as one that stops, and a scorecard that
-    only lists non-zero rules cannot show you the difference between "clean" and
-    "that check silently stopped running".
-    """
-    from pyspark.sql import functions as F
+    Two passes, deliberately. The `unique` rules carry a window function, and
+    Spark forbids a window inside an aggregate - `count_if(count(*) OVER (...))`
+    is a parse error. Windows are legal in a projection, so the predicates are
+    projected to boolean flags first and aggregated second.
 
-    exprs = rule_violation_exprs(rules)
-    if not exprs:
+    Zero-count rules are reported on purpose. A rule that suddenly starts
+    rejecting rows is as much a signal as one that stops, and a scorecard
+    listing only non-zero rules cannot distinguish "clean" from "that check
+    silently stopped running".
+    """
+    flags = rule_flag_exprs(rules)
+    if not flags:
         return {}
-    row = df.selectExpr(*[f"{sql} AS `{rid}`" for rid, sql in exprs.items()]).first()
-    return {rid: int(row[rid]) for rid in exprs}
+
+    # Step 1: project one boolean per rule (windows allowed here).
+    projected = df.selectExpr(
+        *[f"{sql} AS `{flag_column(rid)}`" for rid, sql in flags.items()]
+    )
+    # Step 2: aggregate the flags (no windows left to offend the parser).
+    counts = rule_count_exprs(rules)
+    row = projected.selectExpr(
+        *[f"{sql} AS `{rid}`" for rid, sql in counts.items()]
+    ).first()
+    return {rid: int(row[rid]) for rid in flags}
 
 
 # =============================================================================

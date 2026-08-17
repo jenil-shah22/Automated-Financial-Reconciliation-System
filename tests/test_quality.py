@@ -22,9 +22,11 @@ from ledgerlens.quality import (
     describe,
     failed_rule_count_expr,
     failed_rule_ids_expr,
+    flag_column,
     predicate_for,
     reject_rules,
-    rule_violation_exprs,
+    rule_count_exprs,
+    rule_flag_exprs,
     sql_string,
 )
 
@@ -189,13 +191,55 @@ def test_failed_rule_count_is_derived_from_the_id_list():
     assert "size(split(_failed_rule_ids, '[|]'))" in sql
 
 
-def test_violation_exprs_cover_every_reject_rule():
+def test_flag_and_count_exprs_cover_every_reject_rule():
     contracts = load_contracts()
     for dataset in ("gl", "ap"):
         rules = contracts["datasets"][dataset]["rules"]
-        exprs = rule_violation_exprs(rules)
-        assert set(exprs) == {r["id"] for r in reject_rules(rules)}
-        assert all(sql.startswith("count_if(") for sql in exprs.values())
+        expected = {r["id"] for r in reject_rules(rules)}
+        assert set(rule_flag_exprs(rules)) == expected
+        assert set(rule_count_exprs(rules)) == expected
+
+
+def test_no_aggregate_ever_wraps_a_window_function():
+    """The regression this two-step design exists for.
+
+    `count_if(<predicate>)` is the obvious one-step form and works for every
+    check type except `unique`, whose predicate contains
+    `count(*) OVER (PARTITION BY ...)`. Spark rejects a window nested inside an
+    aggregate:
+
+        "It is not allowed to use a window function inside an aggregate
+         function. Please use the inner window function in a sub-query."
+
+    Windows are legal in a projection and illegal inside an aggregate, so the
+    counting path projects flags first and aggregates second. This test pins
+    that split - the bug is otherwise invisible without a running cluster,
+    because the SQL is only rejected at parse time on Spark.
+    """
+    contracts = load_contracts()
+    for dataset in ("gl", "ap"):
+        rules = contracts["datasets"][dataset]["rules"]
+
+        # The aggregate step must reference only projected flag columns.
+        for rule_id, sql in rule_count_exprs(rules).items():
+            assert "OVER (" not in sql, f"{rule_id} aggregates a window function"
+            assert sql == f"count_if(`{flag_column(rule_id)}`)"
+
+        # ...and at least one predicate really does use a window, otherwise
+        # this test would pass vacuously if `unique` were ever dropped.
+        assert any("OVER (" in sql for sql in rule_flag_exprs(rules).values())
+
+
+def test_flag_column_names_cannot_collide_with_source_columns():
+    """Flags are projected alongside nothing else, but the prefix keeps them
+    unambiguous if that ever changes."""
+    from ledgerlens.schemas import AP_SOURCE_COLUMNS, GL_SOURCE_COLUMNS
+
+    source = set(GL_SOURCE_COLUMNS) | set(AP_SOURCE_COLUMNS)
+    contracts = load_contracts()
+    for dataset in ("gl", "ap"):
+        for rule in reject_rules(contracts["datasets"][dataset]["rules"]):
+            assert flag_column(rule["id"]) not in source
 
 
 # =============================================================================
