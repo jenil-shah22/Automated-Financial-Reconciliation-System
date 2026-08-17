@@ -29,6 +29,23 @@
 
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC ## Reload edited source automatically
+# MAGIC
+# MAGIC Without this, `from ledgerlens import silver` returns the module already
+# MAGIC in `sys.modules` from the previous run. Pulling a fix from Git updates
+# MAGIC the file on disk, but the running Python process never re-reads it — so
+# MAGIC you keep executing the old code and keep seeing the old error.
+# MAGIC
+# MAGIC This must run **before** the imports below.
+
+# COMMAND ----------
+
+# MAGIC %load_ext autoreload
+# MAGIC %autoreload 2
+
+# COMMAND ----------
+
 import os
 import sys
 

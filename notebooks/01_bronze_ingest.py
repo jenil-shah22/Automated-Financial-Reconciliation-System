@@ -35,6 +35,19 @@
 
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC Reload edited source automatically. Without this, re-running the notebook
+# MAGIC returns the module already cached in `sys.modules` — a Git pull updates
+# MAGIC the file on disk but the live Python process never re-reads it, so you
+# MAGIC keep executing the old code. Must run **before** the imports.
+
+# COMMAND ----------
+
+# MAGIC %load_ext autoreload
+# MAGIC %autoreload 2
+
+# COMMAND ----------
+
 import os
 import sys
 
