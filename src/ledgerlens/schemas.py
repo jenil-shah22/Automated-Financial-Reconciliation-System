@@ -229,8 +229,113 @@ QUARANTINE_AP_SCHEMA: List[Column] = quarantine_schema(BRONZE_AP_SCHEMA)
 
 
 # =============================================================================
+# Gold - the reconciliation output, and the only layer anyone else reads
+# =============================================================================
+# Gold is declared here for the same reason bronze and silver are: it is the
+# layer a dashboard, a controller and the data dictionary all consume, so its
+# shape is a published interface rather than whatever the last transformation
+# happened to emit. gold.py projects through these declarations, so a column
+# that is not declared here cannot reach a gold table.
+#
+# NULL vs 0.00 IN THE AMOUNT COLUMNS - a deliberate distinction
+#   `gl_amount` is NULL when a key has no GL side at all. It is NOT 0.00.
+#   Zero is an assertion ("the ledger posted nothing"); NULL is an absence
+#   ("the ledger has no opinion"). MISSING_FROM_GL is the unrecorded-liability
+#   break, and writing 0.00 there would let `sum(gl_amount)` read as a real
+#   posted total that happens to be zero.
+#   `amount_difference` is the exception: a difference has to be a number, so
+#   the missing side is coalesced to zero *for the subtraction only*. The
+#   stored side amounts keep the distinction.
+GOLD_RECON_DETAIL_SCHEMA: List[Column] = [
+    Column("fiscal_period", "string", False,
+           "Reporting period for the key: the GL period, falling back to the AP "
+           "period when the key has no GL side. The GL is the book of record, so "
+           "a timing difference is reported in the period whose close it affects."),
+    Column("account_code", "string", False, "Business key part 1 of 3."),
+    Column("vendor_code", "string", False, "Business key part 2 of 3."),
+    Column("invoice_number", "string", False, "Business key part 3 of 3."),
+    Column("break_status", "string", False,
+           "Exactly one of the six statuses in the break taxonomy. The taxonomy "
+           "is a partition: every key gets one status, no key escapes."),
+    Column("gl_amount", "decimal_18_2", True,
+           "Sum of GL amounts on this key. NULL - not zero - when the key has no "
+           "GL side."),
+    Column("ap_amount", "decimal_18_2", True,
+           "Sum of subledger amounts on this key. NULL - not zero - when the key "
+           "has no subledger side."),
+    Column("amount_difference", "decimal_18_2", False,
+           "gl_amount - ap_amount, with a missing side treated as zero for the "
+           "subtraction. Signed: positive means the GL carries more."),
+    Column("abs_amount_difference", "decimal_18_2", False,
+           "Absolute value of amount_difference. This is the exposure the break "
+           "represents, and what exceptions are ranked by."),
+    Column("gl_fiscal_period", "string", True,
+           "Earliest GL period on the key. NULL when the key has no GL side."),
+    Column("ap_fiscal_period", "string", True,
+           "Earliest subledger period on the key. NULL when the key has no "
+           "subledger side."),
+    Column("gl_row_count", "int", False,
+           "GL rows behind this key. Zero for a subledger-only key."),
+    Column("ap_row_count", "int", False,
+           "Subledger rows behind this key. Greater than one is what makes a key "
+           "DUPLICATE_IN_SUBLEDGER - which is why the aggregation carries a row "
+           "count and not just a sum."),
+]
+
+GOLD_RECON_SUMMARY_SCHEMA: List[Column] = [
+    Column("fiscal_period", "string", False, "Reporting period, as per gold.recon_detail."),
+    Column("break_status", "string", False, "One of the six statuses."),
+    Column("key_count", "long", False,
+           "Business keys with this status in this period. Zero rows are "
+           "materialised on purpose - see gold.py."),
+    Column("gl_amount", "decimal_18_2", False,
+           "Total GL value of those keys. Zero when there are none."),
+    Column("ap_amount", "decimal_18_2", False,
+           "Total subledger value of those keys. Zero when there are none."),
+    Column("net_amount_difference", "decimal_18_2", False,
+           "Sum of the SIGNED differences. Opposite-direction breaks cancel, so "
+           "this is the effect on the books, not the size of the problem."),
+    Column("abs_amount_difference", "decimal_18_2", False,
+           "Sum of the ABSOLUTE differences. Nothing cancels, so this is the "
+           "gross exposure - the number to quote as 'value under investigation'. "
+           "Distinct from net_amount_difference and never interchangeable."),
+]
+
+GOLD_RECON_EXCEPTIONS_SCHEMA: List[Column] = [
+    Column("exception_rank", "int", False,
+           "Rank by abs_amount_difference descending, business key ascending as "
+           "the tie-break. Materialised because a Delta table has no inherent row "
+           "order - an ORDER BY at write time does not survive a read."),
+    Column("fiscal_period", "string", False, "Reporting period, as per gold.recon_detail."),
+    Column("break_status", "string", False, "One of the five non-MATCHED statuses."),
+    Column("account_code", "string", False, "Business key part 1 of 3."),
+    Column("account_name", "string", True,
+           "Account label, joined from the GL. Display only - never a join key."),
+    Column("vendor_code", "string", False, "Business key part 2 of 3."),
+    Column("vendor_name", "string", True,
+           "Vendor label, joined from the subledger. Display only."),
+    Column("invoice_number", "string", False, "Business key part 3 of 3."),
+    Column("gl_amount", "decimal_18_2", True, "As per gold.recon_detail."),
+    Column("ap_amount", "decimal_18_2", True, "As per gold.recon_detail."),
+    Column("amount_difference", "decimal_18_2", False, "As per gold.recon_detail."),
+    Column("abs_amount_difference", "decimal_18_2", False, "As per gold.recon_detail."),
+    Column("gl_fiscal_period", "string", True, "As per gold.recon_detail."),
+    Column("ap_fiscal_period", "string", True, "As per gold.recon_detail."),
+    Column("gl_row_count", "int", False, "As per gold.recon_detail."),
+    Column("ap_row_count", "int", False, "As per gold.recon_detail."),
+]
+
+
+# =============================================================================
 # Conversions
 # =============================================================================
+def to_sql_type(dtype: str) -> str:
+    """Logical type name -> SQL type. One lookup table, used by every layer."""
+    if dtype not in _TYPE_MAP:
+        raise KeyError(f"Unknown logical dtype '{dtype}'")
+    return _TYPE_MAP[dtype][1]
+
+
 def to_spark_schema(columns: Sequence[Column]):
     """Build a Spark StructType. Imported lazily so this module needs no JVM."""
     from pyspark.sql import types as T
@@ -296,4 +401,7 @@ SCHEMAS: Dict[str, List[Column]] = {
     "silver_ap": SILVER_AP_SCHEMA,
     "quarantine_gl": QUARANTINE_GL_SCHEMA,
     "quarantine_ap": QUARANTINE_AP_SCHEMA,
+    "gold_recon_detail": GOLD_RECON_DETAIL_SCHEMA,
+    "gold_recon_summary": GOLD_RECON_SUMMARY_SCHEMA,
+    "gold_recon_exceptions": GOLD_RECON_EXCEPTIONS_SCHEMA,
 }
