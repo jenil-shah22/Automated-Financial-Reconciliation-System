@@ -263,7 +263,10 @@ def run(
     batch_id = f"{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}-{uuid.uuid4().hex[:8]}"
 
     if cfg.mode == "catalog":
-        spark.sql(f"CREATE CATALOG IF NOT EXISTS {cfg.catalog}")
+        # Schemas are created, the catalog is not. Catalog creation needs
+        # elevated privileges that a Free Edition workspace may not grant, and
+        # failing here would abort the run after the header checks have already
+        # passed. The catalog is treated as pre-existing infrastructure.
         spark.sql(f"CREATE SCHEMA IF NOT EXISTS {cfg.catalog}.{cfg.schema}")
 
     return [

@@ -64,10 +64,10 @@ print("ledgerlens", ledgerlens.__version__)
 
 # COMMAND ----------
 
-dbutils.widgets.text("catalog", "ledgerlens", "Catalog")
+dbutils.widgets.text("catalog", "workspace", "Catalog")
 dbutils.widgets.text("bronze_schema", "bronze", "Bronze schema")
 dbutils.widgets.text(
-    "raw_path", "/Volumes/ledgerlens/raw/landing", "Raw volume path"
+    "raw_path", "/Volumes/workspace/raw/landing", "Raw volume path"
 )
 
 CATALOG = dbutils.widgets.get("catalog")
